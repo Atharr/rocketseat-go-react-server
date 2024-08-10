@@ -38,6 +38,7 @@ type MessageMessageCreated struct {
 
 const (
 	MsgFailedToGetRoom     = "failed to get room"
+	MsgFailedToGetRooms    = "failed to get rooms"
 	MsgFailedToInsertMsg   = "failed to insert message"
 	MsgFailedToInsertRoom  = "failed to insert room"
 	MsgFailedToSendMessage = "failed to send message to client"
@@ -154,7 +155,26 @@ func (h apiHandler) notifyClients(msg Message) {
 }
 
 func (h apiHandler) handleGetRooms(w http.ResponseWriter, r *http.Request) {
+	rooms, err := h.q.GetRooms(r.Context())
+	if err != nil {
+		slog.Error(MsgFailedToGetRooms, "error", err)
+		http.Error(w, MsgSomethingWentWrong, http.StatusInternalServerError)
+		return
+	}
 
+	if rooms == nil {
+		rooms = []pgstore.Room{}
+	}
+	sendJSON(w, rooms)
+}
+
+func (h apiHandler) handleGetRoom(w http.ResponseWriter, r *http.Request) {
+	room, _, _, ok := h.readRoom(w, r)
+	if !ok {
+		return
+	}
+
+	sendJSON(w, room)
 }
 
 func (h apiHandler) handleCreateRoom(w http.ResponseWriter, r *http.Request) {
