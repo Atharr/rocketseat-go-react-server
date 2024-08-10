@@ -41,6 +41,10 @@ type MessageMessageReactionCount struct {
 	Count int64  `json:"count"`
 }
 
+type MessageMessageAnswered struct {
+	ID string `json:"id"`
+}
+
 const (
 	MsgFailedToGetMessage        = "failed to get message"
 	MsgFailedToGetRoom           = "failed to get room"
@@ -373,5 +377,32 @@ func (h apiHandler) handleRemoveReactFromMessage(w http.ResponseWriter, r *http.
 }
 
 func (h apiHandler) handleMarkMessageAsAnswered(w http.ResponseWriter, r *http.Request) {
+	_, rawRoomID, _, ok := h.readRoom(w, r)
+	if !ok {
+		return
+	}
 
+	rawMessageID := chi.URLParam(r, "message_id")
+	messageID, err := uuid.Parse(rawMessageID)
+	if err != nil {
+		http.Error(w, MsgInvalidMessageID, http.StatusBadRequest)
+		return
+	}
+
+	err = h.q.MarkMessageAsAnswered(r.Context(), messageID)
+	if err != nil {
+		slog.Error(MsgFailedToReactToMessage, "error", err)
+		http.Error(w, MsgSomethingWentWrong, http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+
+	go h.notifyClients(Message{
+		Kind:   MessageKindMessageAnswered,
+		RoomID: rawRoomID,
+		Value: MessageMessageAnswered{
+			ID: rawMessageID,
+		},
+	})
 }
