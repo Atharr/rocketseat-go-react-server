@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -12,9 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
-	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
-	"github.com/jackc/pgx/v5"
 )
 
 type apiHandler struct {
@@ -210,20 +207,8 @@ func (h apiHandler) handleGetRoomMessages(w http.ResponseWriter, r *http.Request
 }
 
 func (h apiHandler) handleCreateRoomMessage(w http.ResponseWriter, r *http.Request) {
-	rawRoomID := chi.URLParam(r, "room_id")
-	roomID, err := uuid.Parse(rawRoomID)
-	if err != nil {
-		http.Error(w, MsgInvalidRoomID, http.StatusBadRequest)
-		return
-	}
-
-	if _, err = h.q.GetRoom(r.Context(), roomID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			http.Error(w, MsgRoomNotFound, http.StatusBadRequest)
-			return
-		}
-
-		http.Error(w, MsgSomethingWentWrong, http.StatusInternalServerError)
+	_, rawRoomID, roomID, ok := h.readRoom(w, r)
+	if !ok {
 		return
 	}
 
@@ -250,9 +235,7 @@ func (h apiHandler) handleCreateRoomMessage(w http.ResponseWriter, r *http.Reque
 		ID string `json:"id"`
 	}
 
-	data, _ := json.Marshal(response{ID: messageID.String()})
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write(data)
+	sendJSON(w, response{ID: messageID.String()})
 
 	go h.notifyClients(Message{
 		Kind:   MessageKindMessageCreated,
