@@ -14,7 +14,7 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
-	"github.com/jackc/pgx"
+	"github.com/jackc/pgx/v5"
 )
 
 type apiHandler struct {
@@ -22,7 +22,7 @@ type apiHandler struct {
 	r           *chi.Mux
 	upgrader    websocket.Upgrader
 	subscribers map[string]map[*websocket.Conn]context.CancelFunc
-	mu          *sync.RWMutex
+	mu          *sync.Mutex
 }
 
 type Message struct {
@@ -37,6 +37,7 @@ type MessageMessageCreated struct {
 }
 
 const (
+	MsgFailedToGetRoom     = "failed to get room"
 	MsgFailedToInsertMsg   = "failed to insert message"
 	MsgFailedToInsertRoom  = "failed to insert room"
 	MsgFailedToSendMessage = "failed to send message to client"
@@ -49,7 +50,10 @@ const (
 )
 
 const (
-	MessageKindMessageCreated = "message_created"
+	MessageKindMessageCreated          = "message_created"
+	MessageKindMessageRactionIncreased = "message_reaction_increased"
+	MessageKindMessageRactionDecreased = "message_reaction_decreased"
+	MessageKindMessageAnswered         = "message_answered"
 )
 
 func NewHandler(q *pgstore.Queries) http.Handler {
@@ -57,7 +61,7 @@ func NewHandler(q *pgstore.Queries) http.Handler {
 		q:           q,
 		upgrader:    websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
 		subscribers: make(map[string]map[*websocket.Conn]context.CancelFunc),
-		mu:          &sync.RWMutex{},
+		mu:          &sync.Mutex{},
 	}
 	r := chi.NewRouter()
 
@@ -101,20 +105,8 @@ func (h apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h apiHandler) handleSubscribe(w http.ResponseWriter, r *http.Request) {
-	rawRoomID := chi.URLParam(r, "room_id")
-	roomID, err := uuid.Parse(rawRoomID)
-	if err != nil {
-		http.Error(w, MsgInvalidRoomID, http.StatusBadRequest)
-		return
-	}
-
-	if _, err = h.q.GetRoom(r.Context(), roomID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			http.Error(w, MsgRoomNotFound, http.StatusBadRequest)
-			return
-		}
-
-		http.Error(w, MsgSomethingWentWrong, http.StatusInternalServerError)
+	_, rawRoomID, _, ok := h.readRoom(w, r)
+	if !ok {
 		return
 	}
 
@@ -186,9 +178,7 @@ func (h apiHandler) handleCreateRoom(w http.ResponseWriter, r *http.Request) {
 		ID string `json:"id"`
 	}
 
-	data, _ := json.Marshal(response{ID: roomID.String()})
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write(data)
+	sendJSON(w, response{ID: roomID.String()})
 }
 
 func (h apiHandler) handleGetRoomMessages(w http.ResponseWriter, r *http.Request) {
