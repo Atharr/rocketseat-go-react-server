@@ -61,10 +61,10 @@ const (
 )
 
 const (
-	MessageKindMessageCreated          = "message_created"
-	MessageKindMessageRactionIncreased = "message_reaction_increased"
-	MessageKindMessageRactionDecreased = "message_reaction_decreased"
-	MessageKindMessageAnswered         = "message_answered"
+	MessageKindMessageCreated           = "message_created"
+	MessageKindMessageReactionIncreased = "message_reaction_increased"
+	MessageKindMessageReactionDecreased = "message_reaction_decreased"
+	MessageKindMessageAnswered          = "message_answered"
 )
 
 func NewHandler(q *pgstore.Queries) http.Handler {
@@ -328,7 +328,7 @@ func (h apiHandler) handleReactToMessage(w http.ResponseWriter, r *http.Request)
 	sendJSON(w, response{Count: count})
 
 	go h.notifyClients(Message{
-		Kind:   MessageKindMessageRactionIncreased,
+		Kind:   MessageKindMessageReactionIncreased,
 		RoomID: rawRoomID,
 		Value: MessageMessageReactionCount{
 			ID:    rawMessageID,
@@ -338,7 +338,38 @@ func (h apiHandler) handleReactToMessage(w http.ResponseWriter, r *http.Request)
 }
 
 func (h apiHandler) handleRemoveReactFromMessage(w http.ResponseWriter, r *http.Request) {
+	_, rawRoomID, _, ok := h.readRoom(w, r)
+	if !ok {
+		return
+	}
 
+	rawMessageID := chi.URLParam(r, "message_id")
+	messageID, err := uuid.Parse(rawMessageID)
+	if err != nil {
+		http.Error(w, MsgInvalidMessageID, http.StatusBadRequest)
+		return
+	}
+
+	count, err := h.q.RemoveReactionFromMessage(r.Context(), messageID)
+	if err != nil {
+		slog.Error(MsgFailedToReactToMessage, "error", err)
+		http.Error(w, MsgSomethingWentWrong, http.StatusInternalServerError)
+		return
+	}
+
+	type response struct {
+		Count int64 `json:"count"`
+	}
+	sendJSON(w, response{Count: count})
+
+	go h.notifyClients(Message{
+		Kind:   MessageKindMessageReactionDecreased,
+		RoomID: rawRoomID,
+		Value: MessageMessageReactionCount{
+			ID:    rawMessageID,
+			Count: count,
+		},
+	})
 }
 
 func (h apiHandler) handleMarkMessageAsAnswered(w http.ResponseWriter, r *http.Request) {
