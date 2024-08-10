@@ -36,6 +36,11 @@ type MessageMessageCreated struct {
 	Message string `json:"message"`
 }
 
+type MessageMessageReactionCount struct {
+	ID    string `json:"id"`
+	Count int64  `json:"count"`
+}
+
 const (
 	MsgFailedToGetMessage        = "failed to get message"
 	MsgFailedToGetRoom           = "failed to get room"
@@ -43,6 +48,7 @@ const (
 	MsgFailedToGetRooms          = "failed to get rooms"
 	MsgFailedToInsertMessage     = "failed to insert message"
 	MsgFailedToInsertRoom        = "failed to insert room"
+	MsgFailedToReactToMessage    = "failed to react to message"
 	MsgFailedToSendMessage       = "failed to send message to client"
 	MsgFailedToUpgradeConnection = "failed to upgrade to websocket connection"
 	MsgInvalidJSON               = "invalid json"
@@ -297,7 +303,38 @@ func (h apiHandler) handleGetRoomMessage(w http.ResponseWriter, r *http.Request)
 }
 
 func (h apiHandler) handleReactToMessage(w http.ResponseWriter, r *http.Request) {
+	_, rawRoomID, _, ok := h.readRoom(w, r)
+	if !ok {
+		return
+	}
 
+	rawMessageID := chi.URLParam(r, "message_id")
+	messageID, err := uuid.Parse(rawMessageID)
+	if err != nil {
+		http.Error(w, MsgInvalidMessageID, http.StatusBadRequest)
+		return
+	}
+
+	count, err := h.q.ReactToMessage(r.Context(), messageID)
+	if err != nil {
+		slog.Error(MsgFailedToReactToMessage, "error", err)
+		http.Error(w, MsgSomethingWentWrong, http.StatusInternalServerError)
+		return
+	}
+
+	type response struct {
+		Count int64 `json:"count"`
+	}
+	sendJSON(w, response{Count: count})
+
+	go h.notifyClients(Message{
+		Kind:   MessageKindMessageRactionIncreased,
+		RoomID: rawRoomID,
+		Value: MessageMessageReactionCount{
+			ID:    rawMessageID,
+			Count: count,
+		},
+	})
 }
 
 func (h apiHandler) handleRemoveReactFromMessage(w http.ResponseWriter, r *http.Request) {
