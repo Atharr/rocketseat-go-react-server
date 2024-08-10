@@ -34,17 +34,18 @@ type MessageMessageCreated struct {
 }
 
 const (
-	MsgFailedToGetRoom     = "failed to get room"
-	MsgFailedToGetRooms    = "failed to get rooms"
-	MsgFailedToInsertMsg   = "failed to insert message"
-	MsgFailedToInsertRoom  = "failed to insert room"
-	MsgFailedToSendMessage = "failed to send message to client"
-	MsgFailedToUpgradeConn = "failed to upgrade to websocket connection"
-	MsgInvalidJSON         = "invalid json"
-	MsgInvalidRoomID       = "invalid room id"
-	MsgNewClientConnected  = "new client connected"
-	MsgRoomNotFound        = "room not found"
-	MsgSomethingWentWrong  = "something went wrong"
+	MsgFailedToGetRoom           = "failed to get room"
+	MsgFailedToGetRoomMessages   = "failed to get room messages"
+	MsgFailedToGetRooms          = "failed to get rooms"
+	MsgFailedToInsertMessage     = "failed to insert message"
+	MsgFailedToInsertRoom        = "failed to insert room"
+	MsgFailedToSendMessage       = "failed to send message to client"
+	MsgFailedToUpgradeConnection = "failed to upgrade to websocket connection"
+	MsgInvalidJSON               = "invalid json"
+	MsgInvalidRoomID             = "invalid room id"
+	MsgNewClientConnected        = "new client connected"
+	MsgRoomNotFound              = "room not found"
+	MsgSomethingWentWrong        = "something went wrong"
 )
 
 const (
@@ -115,8 +116,8 @@ func (h apiHandler) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	// Upgrade the connection to websocket
 	c, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		slog.Warn(MsgFailedToUpgradeConn, "error", err)
-		http.Error(w, MsgFailedToUpgradeConn, http.StatusBadRequest)
+		slog.Warn(MsgFailedToUpgradeConnection, "error", err)
+		http.Error(w, MsgFailedToUpgradeConnection, http.StatusBadRequest)
 		return
 	}
 	defer c.Close()
@@ -203,7 +204,22 @@ func (h apiHandler) handleCreateRoom(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h apiHandler) handleGetRoomMessages(w http.ResponseWriter, r *http.Request) {
+	_, _, roomID, ok := h.readRoom(w, r)
+	if !ok {
+		return
+	}
 
+	messages, err := h.q.GetRoomMessages(r.Context(), roomID)
+	if err != nil {
+		slog.Error(MsgFailedToGetRoomMessages, "error", err)
+		http.Error(w, MsgSomethingWentWrong, http.StatusInternalServerError)
+		return
+	}
+
+	if messages == nil {
+		messages = []pgstore.Message{}
+	}
+	sendJSON(w, messages)
 }
 
 func (h apiHandler) handleCreateRoomMessage(w http.ResponseWriter, r *http.Request) {
@@ -226,7 +242,7 @@ func (h apiHandler) handleCreateRoomMessage(w http.ResponseWriter, r *http.Reque
 		Message: body.Message,
 	})
 	if err != nil {
-		slog.Error(MsgFailedToInsertMsg, "error", err)
+		slog.Error(MsgFailedToInsertMessage, "error", err)
 		http.Error(w, MsgSomethingWentWrong, http.StatusInternalServerError)
 		return
 	}
