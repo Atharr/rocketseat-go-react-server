@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -11,7 +12,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/jackc/pgx/v5"
 )
 
 type apiHandler struct {
@@ -34,6 +37,7 @@ type MessageMessageCreated struct {
 }
 
 const (
+	MsgFailedToGetMessage        = "failed to get message"
 	MsgFailedToGetRoom           = "failed to get room"
 	MsgFailedToGetRoomMessages   = "failed to get room messages"
 	MsgFailedToGetRooms          = "failed to get rooms"
@@ -42,7 +46,9 @@ const (
 	MsgFailedToSendMessage       = "failed to send message to client"
 	MsgFailedToUpgradeConnection = "failed to upgrade to websocket connection"
 	MsgInvalidJSON               = "invalid json"
+	MsgInvalidMessageID          = "invalid message id"
 	MsgInvalidRoomID             = "invalid room id"
+	MsgMessageNotFound           = "message not found"
 	MsgNewClientConnected        = "new client connected"
 	MsgRoomNotFound              = "room not found"
 	MsgSomethingWentWrong        = "something went wrong"
@@ -264,7 +270,30 @@ func (h apiHandler) handleCreateRoomMessage(w http.ResponseWriter, r *http.Reque
 }
 
 func (h apiHandler) handleGetRoomMessage(w http.ResponseWriter, r *http.Request) {
+	_, _, _, ok := h.readRoom(w, r)
+	if !ok {
+		return
+	}
 
+	rawMessageID := chi.URLParam(r, "message_id")
+	messageID, err := uuid.Parse(rawMessageID)
+	if err != nil {
+		http.Error(w, MsgInvalidMessageID, http.StatusBadRequest)
+		return
+	}
+
+	message, err := h.q.GetMessage(r.Context(), messageID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, MsgMessageNotFound, http.StatusNotFound)
+			return
+		}
+		slog.Error(MsgFailedToGetMessage, "error", err)
+		http.Error(w, MsgSomethingWentWrong, http.StatusInternalServerError)
+		return
+	}
+
+	sendJSON(w, message)
 }
 
 func (h apiHandler) handleReactToMessage(w http.ResponseWriter, r *http.Request) {
